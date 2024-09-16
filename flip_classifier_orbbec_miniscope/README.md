@@ -2,3 +2,4 @@ Flip classifier that works with Orbbec Femto cameras. This allows for flipping a
 ```bash
 curl -L -o flip-classifier-orbbec-miniscope.pkl https://github.com/llorente-lab/moseq-utils/raw/main/flip_classifier_orbbec_miniscope/flip-classifier-orbbec-miniscope.pkl
 ```
+Assuming you have curl installed.
