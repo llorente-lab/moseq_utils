@@ -49,7 +49,7 @@ def run_kw_dunn(data, group_col, value_col, control_group):
     
     return significant_sylls
 
-def plot_syllable_usage_comparison(stats_df, group1_name, group2_name, syll_info=None, max_sylls=40, colors=None, figsize=(10, 6)):
+def plot_syllable_usage_comparison(stats_df, group1_name, group2_name, mapping, syll_info=None, max_sylls=40, colors=None, figsize=(10, 6)):
     """
     Plot a comparison of syllable usage between two groups with error bars and significance markers.
     
@@ -57,6 +57,7 @@ def plot_syllable_usage_comparison(stats_df, group1_name, group2_name, syll_info
     stats_df (pandas.DataFrame): dataframe containing the summary statistics about syllable data
     group1_name (str): Name of the first group to compare (control group)
     group2_name (str): Name of the second group to compare (experimental group)
+    mapping (str): sex of the specified group (male or female)
     syll_info (dict): dictionary of syllable numbers mapped to dict containing the label, description and crowd movie path
     max_sylls (int): the maximum number of syllables to include
     colors (list): list of user-selected colors to represent the data
@@ -66,7 +67,16 @@ def plot_syllable_usage_comparison(stats_df, group1_name, group2_name, syll_info
     fig (pyplot.figure): plotted syllable usage comparison
     legend (pyplot.legend): figure legend
     """
-    
+
+    if mapping.lower() == 'male':
+        MAPPING = MAPPING_MALES
+        COLOR_MAPPING = COLOR_MAPPING_MALES
+    elif mapping.lower() == 'female':
+        MAPPING = MAPPING_FEMALES
+        COLOR_MAPPING = COLOR_MAPPING_FEMALES
+    else:
+        raise ValueError(f'Mapping must be male or female, not {mapping}')
+        
     # Validate and prepare data
     stats_df = stats_df[stats_df['syllable'] < max_sylls]
     stats_df['group'] = stats_df['group'].replace(MAPPING)
