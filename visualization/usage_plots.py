@@ -14,6 +14,14 @@ import matplotlib as mpl
 from scipy.spatial.distance import jensenshannon
 from config import MAPPING_MALES, COLOR_MAPPING_MALES, MAPPING_FEMALES, COLOR_MAPPING_FEMALES
 
+def _get_mapping(mapping):
+    if mapping.lower() == 'male':
+        return MAPPING_MALES, COLOR_MAPPING_MALES
+    elif mapping.lower() == 'female':
+        return MAPPING_FEMALES, COLOR_MAPPING_FEMALES
+    else:
+        raise ValueError(f'Mapping must be male or female, not {mapping}')
+
 def run_kw_dunn(data, group_col, value_col, control_group):
     """
     Run Kruskal-Wallis H-test and Dunn's post-hoc test to identify significant differences.
@@ -68,14 +76,11 @@ def plot_syllable_usage_comparison(stats_df, group1_name, group2_name, mapping, 
     legend (pyplot.legend): figure legend
     """
 
-    if mapping.lower() == 'male':
-        MAPPING = MAPPING_MALES
-        COLOR_MAPPING = COLOR_MAPPING_MALES
-    elif mapping.lower() == 'female':
-        MAPPING = MAPPING_FEMALES
-        COLOR_MAPPING = COLOR_MAPPING_FEMALES
-    else:
-        raise ValueError(f'Mapping must be male or female, not {mapping}')
+    try:
+       MAPPING, COLOR_MAPPING = _get_mapping(mapping)
+    except ValueError as e:
+        print(f"Error: {e}")
+        return None, None, None # lets keep the return type consistent
         
     # Validate and prepare data
     stats_df = stats_df[stats_df['syllable'] < max_sylls]
@@ -133,7 +138,7 @@ def plot_syllable_usage_comparison(stats_df, group1_name, group2_name, mapping, 
     
     return fig, legend, group_data
 
-def jensen_shannon_divergence(stats_df, groups=['all'], save_path='jsd_matrix.png'):
+def jensen_shannon_divergence(stats_df, mapping, groups=['all'], save_path='jsd_matrix.png'):
     """
     Compute Jensen-Shannon divergence between a pair of experimental groups
     
