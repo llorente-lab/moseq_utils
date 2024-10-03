@@ -26,6 +26,9 @@ from sklearn.multiclass import OneVsRestClassifier
 
 
 class Classifier:
+    """
+    Linear Classifier for predicting experimental group based on behavioral summaries.
+    """
     def __init__(
         self,
         model_type="logistic_regression",
@@ -34,6 +37,27 @@ class Classifier:
         plot_dir="plots/model_plots",
         features="moseq",
     ):
+        """
+        Initialize Classifier.
+
+        Args:
+        - model_type (str): Type of model to use (logistic_regression, random_forest, or svm). Defaults to Logistic Regression.
+        - color_mapping (dict): Dictionary mapping experimental group to specific colors. If None, it will use viridis.
+        - random_state (int): Random state used to initialize the classifier.
+        - plot_dir (str): Path to save plots in.
+        - features (str): Prediction features being used. Defaults to MoSeq.
+
+        Attributes:
+        - model_type (str): Type of model to use (logistic_regression, random_forest, or svm). Defaults to Logistic Regression.
+        - color_mapping (dict): Dictionary mapping experimental group to specific colors. If None, it will use viridis.
+        - random_state (int): Random state used to initialize the classifier.
+        - plot_dir (str): Path to save plots in.
+        - model (OneVsRestClassifier, RandomForestClassifier, or SVC): The model that is instantiated based on the specified `model_type`.
+        - scaler (sklearn.preprocessing.StandardScaler): Scaler used to standardize features so that they will have mean 0 and variance 1.
+        - smote (SMOTE): Synthetic Minority Over-sampling Technique for balancing classes in training data.
+        - skf (StratifiedKFold): K-fold cross-validation splitter with stratification to preserve the percentage of samples for each class.
+        - features (str): Prediction features being used. Defaults to MoSeq.
+        """
         self.model_type = model_type
         self.random_state = random_state
         self.model = self._get_model()
@@ -52,6 +76,15 @@ class Classifier:
         self.color_mapping = color_mapping if color_mapping is not None else {}
 
     def _get_model(self):
+        """
+        Instantiates a model based on the model_type passed as an argument.
+
+        Args:
+        None:
+
+        Returns:
+        Machine Learning model (Logistic Regression, Random Forest Classifier, or Support Vector Classifier) depending on self.model_type
+        """
         if self.model_type == "logistic_regression":
             base_model = LogisticRegression(
                 random_state=self.random_state, max_iter=10000, penalty="l2"
@@ -66,13 +99,63 @@ class Classifier:
                 "Invalid model type. Choose 'logistic_regression', 'random_forest', or 'svm'."
             )
 
-    def preprocess_data(self, X, y):
+    def _preprocess_data(self, X, y):
+        """
+        Helper function to scale the data with StandardScaler and handle class imbalance with SMOTE.
+
+        Args:
+        X (pandas.DataFrame): Pandas DataFrame containing the features.
+        y (pandas.Series): The group column of the original fingerprint_df.
+
+        Note: X and y must have the same length and are assumed to be indexed along the same axis).
+
+        Returns:
+        X_resampled (numpy.array): Numpy array of shape (n_samples, n_features), where n_samples might be different from X due to resampling
+        y_resampled (numpy.array): Numpy array of shape (n_samples,) where n_samples matches X_resampled
+        """
         X_scaled = self.scaler.fit_transform(X)
         X_resampled, y_resampled = self.smote.fit_resample(X_scaled, y)
         return X_resampled, y_resampled
 
     def train_and_evaluate(self, X, y):
-        X_resampled, y_resampled = self.preprocess_data(X, y)
+        """
+        Trains, fits, and evaluates a model using cross-validation.
+
+        This method performs the following steps:
+        1. Preprocesses the data using SMOTE and StandardScaler
+        2. Performs stratified k-fold cross-validation
+        3. Makes predictions using the trained model
+        4. Calculates various performance metrics
+        5. Generates a confusion matrix plot
+
+        Args:
+        X (pandas.DataFrame): Pandas DataFrame containing the features.
+        y (pandas.Series): The group column of the original fingerprint_df.
+
+        Note: X and y must have the same length and are assumed to be indexed along the same axis.
+
+        Returns:
+        tuple: A tuple containing:
+            - y_pred (numpy.ndarray): Predicted labels from cross-validation.
+            - accuracy (float): Overall accuracy of the model.
+            - conf_matrix (numpy.ndarray): Confusion matrix.
+            - class_report (str): Classification report as a string, including precision, recall, and F1-score for each class.
+            - f1 (float): Weighted F1 score.
+            - cm_fig (matplotlib.figure.Figure): Confusion matrix plot as a matplotlib figure.
+
+        Side effects:
+        - Prints the model's accuracy, classification report, and F1 score to the console.
+        - Saves a confusion matrix plot to the specified plot directory.
+
+        Notes:
+        - Uses the SMOTE algorithm for handling class imbalance.
+        - Applies StandardScaler to normalize features.
+        - Employs stratified k-fold cross-validation for more robust performance estimation.
+        - The confusion matrix plot is generated using seaborn and customized for readability.
+        - The method handles multi-class classification scenarios.
+        """"
+                                                                    
+        X_resampled, y_resampled = self._preprocess_data(X, y)
 
         y_pred = cross_val_predict(
             self.model, X_resampled, y_resampled, cv=self.skf, n_jobs=-1
@@ -118,6 +201,22 @@ class Classifier:
         return y_pred, accuracy, conf_matrix, class_report, f1, cm_fig
 
     def get_feature_importance(self, X, y):
+        """
+        Calculates and returns feature importance for the trained model.
+
+        Args:
+        X (pandas.DataFrame): Pandas DataFrame containing the features.
+        y (pandas.Series): The group column of the original fingerprint_df.
+
+        Returns:
+        importances_df (pandas.DataFrame): A DataFrame containing features and their importance scores, sorted in descending order.
+
+        Notes:
+        - For logistic regression, feature importance is based on the absolute values of the coefficients.
+        - For random forest, feature importance is based on the built-in feature_importances_ attribute.
+        - For SVM, feature importance is based on the absolute values of the coefficients (only for linear kernel).
+        - The method prints the top 10 feature importances and saves the full list to a CSV file.
+        """
         X_resampled, y_resampled = self.preprocess_data(X, y)
         self.model.fit(X_resampled, y_resampled)
 
@@ -141,6 +240,23 @@ class Classifier:
         return importances_df
 
     def plot_precision_recall_curve(self, X, y):
+        """
+        Plots the Precision-Recall curve for each class and the micro-average.
+
+        Args:
+        X (pandas.DataFrame): Pandas DataFrame containing the features.
+        y (pandas.Series): The group column of the original fingerprint_df.
+
+        Returns:
+        matplotlib.figure.Figure: The generated Precision-Recall curve plot.
+
+        Notes:
+        - Uses cross-validation to compute prediction probabilities.
+        - Generates a Precision-Recall curve for each class and the micro-average.
+        - Uses color mapping if provided, otherwise uses a default color scheme.
+        - Saves the plot as a PNG file in the specified plot directory.
+        - The plot includes the Average Precision (AP) score for each class in the legend.
+        """
         X_resampled, y_resampled = self.preprocess_data(X, y)
 
         # Use tqdm to show progress
