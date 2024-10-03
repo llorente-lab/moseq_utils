@@ -7,6 +7,6 @@ scipy
 imblearn
 tqdm
 matplotlib
-scikit_posthocs
+scikit-posthocs
 pandas
 seaborn
