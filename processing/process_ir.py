@@ -1,8 +1,8 @@
 import sys
 import cv2
-import ffmpeg
 import numpy as np
 import time
+import subprocess
 from pathlib import Path
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QPushButton, QFileDialog,
@@ -12,9 +12,9 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QImage, QPixmap
 
 """
-Function for processing IR videos for DeepLabCut analysis
+Function for processing IR videos obtained from MoSeq analysis for visualization
+This allows for seamless use with DeepLabCut, SLEAP, or any keypoint tracking programs
 """
-
 
 class VideoProcessor:
     def __init__(self, input_path, output_dir, display=True, progress_callback=None, frame_callback=None):
@@ -23,6 +23,7 @@ class VideoProcessor:
         self.display = display
         self.progress_callback = progress_callback
         self.frame_callback = frame_callback
+        self.ffmpeg_process = None
 
     @staticmethod
     def adjust_brightness_contrast(frame, brightness=150, contrast=210):
@@ -39,7 +40,40 @@ class VideoProcessor:
         equalized_bgr = cv2.cvtColor(equalized, cv2.COLOR_GRAY2BGR)
         return equalized_bgr
 
-    def process(self, file, file_index, total_files):
+    def process_folder(self, stop_check=None):
+        if not self.output_dir.exists():
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        files = []
+        if self.input_path.is_dir():
+            files = list(self.input_path.glob('*.avi')) + list(self.input_path.glob('*.mp4'))
+        elif self.input_path.is_file():
+            if self.input_path.suffix.lower() in ['.avi', '.mp4']:
+                files = [self.input_path]
+            else:
+                raise ValueError("Input file is not a supported video format (.avi or .mp4).")
+        else:
+            raise ValueError("Invalid input path.")
+
+        total_files = len(files)
+        if total_files == 0:
+            raise FileNotFoundError("No video files found in the input directory.")
+
+        for i, file in enumerate(files):
+            if stop_check and stop_check():
+                break
+            file_index = i + 1
+            self.process(file, file_index, total_files, stop_check)
+            # update progress
+            overall_progress = int((file_index / total_files) * 100)
+            if self.progress_callback:
+                self.progress_callback('overall_progress', {
+                    'overall_progress': overall_progress,
+                    'files_processed': file_index,
+                    'total_files': total_files
+                })
+
+    def process(self, file, file_index, total_files, stop_check=None):
         try:
             cap = cv2.VideoCapture(str(file))
             if not cap.isOpened():
@@ -59,14 +93,25 @@ class VideoProcessor:
         start_time = time.time()
         processed_frames = 0
 
-        # Open FFmpeg process for output
-        process = (
-            ffmpeg
-            .input('pipe:', format='rawvideo', pix_fmt='bgr24', s=f'{width}x{height}', r=fps)
-            .output(str(output_path), pix_fmt='yuv420p', vcodec='libx264', preset='ultrafast', tune='film')
-            .overwrite_output()
-            .run_async(pipe_stdin=True)
-        )
+        # start FFmpeg process
+        command = [
+            'ffmpeg',
+            '-y',  # Overwrite output file if it exists
+            '-f', 'rawvideo',
+            '-vcodec', 'rawvideo',
+            '-s', f'{width}x{height}',  # size of one frame
+            '-pix_fmt', 'bgr24',
+            '-r', str(fps),  # fps
+            '-i', '-',  # The input comes from a pipe
+            '-an',  # Tells FFMPEG not to expect any audio
+            '-vcodec', 'libx264',
+            '-pix_fmt', 'yuv420p',
+            '-preset', 'ultrafast',
+            '-tune', 'film',
+            str(output_path)
+        ]
+
+        self.ffmpeg_process = subprocess.Popen(command, stdin=subprocess.PIPE)
 
         # Notify about the current file
         if self.progress_callback:
@@ -77,31 +122,35 @@ class VideoProcessor:
             })
 
         while True:
+            if stop_check and stop_check():
+                break
             ret, frame = cap.read()
             if not ret:
                 break
 
             adjusted_frame = self.adjust_brightness_contrast(frame)
             equalized_frame = self.adaptive_histogram_equalization(adjusted_frame)
-            frame_bytes = equalized_frame.astype(np.uint8).tobytes()
+            frame_bytes = equalized_frame.tobytes()
 
-            process.stdin.write(frame_bytes)
+            # we need to manually organize the ffmpeg process so that we can call a stop to it later on, otherwise we get errors where we're stopping it in the gui but the thread is still being used by ffmpeg
+
+            self.ffmpeg_process.stdin.write(frame_bytes) 
 
             processed_frames += 1
 
-            # Calculate progress percentage for current video
+            # compute video progress
             current_video_progress = int((processed_frames / total_frames) * 100) if total_frames > 0 else 0
 
-            # Calculate processing speed
+            # compute processing speed
             elapsed_time = time.time() - start_time
             if elapsed_time > 0:
                 current_fps = processed_frames / elapsed_time
-                processing_speed = current_fps / fps  # Speed factor (e.g., 2x, 3x)
+                processing_speed = current_fps / fps  # speed factor (e.g., 2x, 3x)
             else:
                 current_fps = 0
                 processing_speed = 0
 
-            # Update progress
+            # update progress
             if self.progress_callback:
                 self.progress_callback('progress', {
                     'current_video_progress': current_video_progress,
@@ -111,48 +160,22 @@ class VideoProcessor:
                     'total_frames': total_frames
                 })
 
-            # Update frame in GUI
+            # update frame in GUI
             if self.display and self.frame_callback:
                 self.frame_callback(equalized_frame)
 
         cap.release()
-        process.stdin.close()
-        process.wait()
+        self.ffmpeg_process.stdin.close()
+        self.ffmpeg_process.wait()
+        self.ffmpeg_process = None
 
-    def process_folder(self):
-        if not self.output_dir.exists():
-            self.output_dir.mkdir(parents=True, exist_ok=True)
-
-        files = []
-        if self.input_path.is_dir():
-            files = list(self.input_path.glob('*.avi')) + list(self.input_path.glob('*.mp4'))
-        elif self.input_path.is_file():
-            if self.input_path.suffix.lower() in ['.avi', '.mp4']:
-                files = [self.input_path]
-            else:
-                raise ValueError("Input file is not a supported video format (.avi or .mp4).")
-        else:
-            raise ValueError("Invalid input path.")
-
-        total_files = len(files)
-        if total_files == 0:
-            raise FileNotFoundError("No video files found in the input directory.")
-
-        for idx, file in enumerate(files):
-            file_index = idx + 1
-            self.process(file, file_index, total_files)
-            # Update overall progress
-            overall_progress = int((file_index / total_files) * 100)
-            if self.progress_callback:
-                self.progress_callback('overall_progress', {
-                    'overall_progress': overall_progress,
-                    'files_processed': file_index,
-                    'total_files': total_files
-                })
-
+    def stop_processing(self):
+        if self.ffmpeg_process:
+            self.ffmpeg_process.terminate()
+            self.ffmpeg_process.wait()
+            self.ffmpeg_process = None
 
 class VideoProcessorThread(QThread):
-    # Custom signals
     file_changed = pyqtSignal(str)
     current_video_progress = pyqtSignal(int)
     overall_progress = pyqtSignal(int)
@@ -171,27 +194,28 @@ class VideoProcessorThread(QThread):
         self.processor.frame_callback = self.emit_frame
         self.is_running = True
 
-    @pyqtSlot()
     def run(self):
         try:
-            self.processor.process_folder()
+            self.processor.process_folder(stop_check=self.is_stopped)
             if self.is_running:
                 self.finished.emit()
             else:
                 self.error.emit("Processing stopped by user.")
         except Exception as e:
             self.error.emit(str(e))
-    
+        finally:
+            self.processor.stop_processing()  # Safe stop ffmpeg process
+
     def stop(self):
         self.is_running = False
-    
+        self.processor.stop_processing()  # stop ffmpeg process
+
     def is_stopped(self):
         return not self.is_running
 
     def progress_callback(self, event_type, data):
         if event_type == 'file_changed':
-            current_file = data['current_file']
-            self.file_changed.emit(current_file)
+            self.file_changed.emit(data['current_file'])
             self.files_processed.emit(data['file_index'] - 1, data['total_files'])
         elif event_type == 'progress':
             self.current_video_progress.emit(data['current_video_progress'])
@@ -202,10 +226,8 @@ class VideoProcessorThread(QThread):
             self.overall_progress.emit(data['overall_progress'])
             self.files_processed.emit(data['files_processed'], data['total_files'])
 
-    @pyqtSlot(np.ndarray)
     def emit_frame(self, frame):
         self.frame.emit(frame)
-
 
 class VideoProcessorGUI(QMainWindow):
     def __init__(self):
@@ -234,15 +256,19 @@ class VideoProcessorGUI(QMainWindow):
         self.start_button = QPushButton('Start Processing')
         self.start_button.clicked.connect(self.start_processing)
 
-        # Video display area without fixed size
+        self.stop_button = QPushButton('Stop Processing')
+        self.stop_button.clicked.connect(self.stop_processing)
+        self.stop_button.setEnabled(False)
+
+        # video display area -- no fixed size
         self.video_label = QLabel()
         self.video_label.setStyleSheet("background-color: black;")
         self.video_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        # Current file label
+        # current file label
         self.current_file_label = QLabel('Current File: None')
 
-        # Combined label for frames processed and current video progress
+        # create progress labels
         self.current_video_progress_label = QLabel('Current Video Progress: 0% (Frames: 0 / 0)')
         self.current_video_progress_bar = QProgressBar()
         self.current_video_progress_bar.setAlignment(Qt.AlignCenter)
@@ -254,20 +280,17 @@ class VideoProcessorGUI(QMainWindow):
         self.overall_progress_bar.setAlignment(Qt.AlignCenter)
         self.overall_progress_bar.setFormat('%p%')
 
-        # Processing speed and FPS labels
+        # create speed and fps labels
         self.fps_label = QLabel('Current FPS: 0.00')
         self.speed_label = QLabel('Processing Speed: 0.00x')
 
-        # Adjust size policies for other widgets
+        # adjust size policies for other widgets
         self.start_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.stop_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         input_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         output_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
-        self.stop_button = QPushButton('Stop Processing')
-        self.stop_button.clicked.connect(self.stop_processing)
-        self.stop_button.setEnabled(False)
-
-        # Layouts
+        # layouts for button, boxes, etc.
         layout = QVBoxLayout()
 
         input_layout = QHBoxLayout()
@@ -280,21 +303,25 @@ class VideoProcessorGUI(QMainWindow):
         output_layout.addWidget(self.output_line)
         output_layout.addWidget(output_button)
 
-        # Current video progress layout
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self.start_button)
+        button_layout.addWidget(self.stop_button)
+
+        # current video progress layout
         current_video_progress_layout = QVBoxLayout()
         current_video_progress_layout.addWidget(self.current_video_progress_label)
         current_video_progress_layout.addWidget(self.current_video_progress_bar)
 
-        # Overall progress layout
+        # overall progress layout
         overall_progress_layout = QVBoxLayout()
         overall_progress_layout.addWidget(self.overall_progress_label)
         overall_progress_layout.addWidget(self.overall_progress_bar)
 
-        # Add widgets to the main layout
+        # add widgets to the main layout
         layout.addLayout(input_layout)
         layout.addLayout(output_layout)
         layout.addWidget(self.display_checkbox)
-        layout.addWidget(self.start_button)
+        layout.addLayout(button_layout)
         layout.addWidget(self.current_file_label)
         layout.addWidget(self.video_label)
         layout.addLayout(current_video_progress_layout)
@@ -335,15 +362,17 @@ class VideoProcessorGUI(QMainWindow):
         self.fps_label.setText('Current FPS: 0.00')
         self.speed_label.setText('Processing Speed: 0.00x')
         self.current_file_label.setText('Current File: None')
+        self.current_video_progress_label
         self.current_video_progress_label.setText('Current Video Progress: 0% (Frames: 0 / 0)')
         self.overall_progress_label.setText('Overall Progress: 0% (Files: 0 / 0)')
 
         self.processor = VideoProcessor(input_path, output_dir, display=display)
 
-        # Disable start button
+        # set start and stop button defaults
         self.start_button.setEnabled(False)
+        self.stop_button.setEnabled(True)
 
-        # Start processing in a separate thread
+        # start processing in a separate thread
         self.thread = VideoProcessorThread(self.processor)
         self.thread.file_changed.connect(self.update_current_file)
         self.thread.current_video_progress.connect(self.update_current_video_progress)
@@ -356,6 +385,13 @@ class VideoProcessorGUI(QMainWindow):
         self.thread.error.connect(self.handle_error)
         self.thread.frame.connect(self.update_frame)
         self.thread.start()
+
+    @pyqtSlot()
+    def stop_processing(self):
+        if self.thread and self.thread.isRunning():
+            self.thread.stop()
+            self.thread.wait()  # Wait for the thread to finish
+            self.processing_finished()
 
     @pyqtSlot(str)
     def update_current_file(self, current_file):
@@ -401,12 +437,14 @@ class VideoProcessorGUI(QMainWindow):
         self.update_files_processed(self.overall_progress_bar.value(), self.overall_progress_bar.maximum())
         QMessageBox.information(self, 'Processing Finished', 'Video processing is complete.')
         self.start_button.setEnabled(True)
+        self.stop_button.setEnabled(False)
         self.video_label.clear()
 
     @pyqtSlot(str)
     def handle_error(self, error_message):
         QMessageBox.critical(self, "Error", error_message)
         self.start_button.setEnabled(True)
+        self.stop_button.setEnabled(False)
         self.video_label.clear()
 
     @pyqtSlot(np.ndarray)
@@ -419,19 +457,19 @@ class VideoProcessorGUI(QMainWindow):
         self.video_label.setPixmap(pixmap.scaled(self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
     def closeEvent(self, event):
-        # Ensure the thread is properly terminated when the GUI is closed
+        # Ensure the thread and ffmpeg process are properly terminated when the GUI is closed
         if self.thread and self.thread.isRunning():
-            self.thread.terminate()
+            self.thread.stop()
             self.thread.wait()
+        if self.processor:
+            self.processor.stop_processing()
         event.accept()
-
 
 def main():
     app = QApplication(sys.argv)
     gui = VideoProcessorGUI()
     gui.show()
     sys.exit(app.exec_())
-
 
 if __name__ == '__main__':
     main()
