@@ -159,9 +159,9 @@ class Classifier:
         n_classes = y_test.shape[1]
 
         # Compute PR curve and average precision for each class
-        precision = dict()
-        recall = dict()
-        average_precision = dict()
+        precision = {}
+        recall = {}
+        average_precision = {}
         for i in range(n_classes):
             precision[i], recall[i], _ = precision_recall_curve(
                 y_test[:, i], y_score[:, i]
