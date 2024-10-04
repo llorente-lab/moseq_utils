@@ -4,7 +4,7 @@ import numpy as np
 import time
 import subprocess
 from pathlib import Path
-from PyQt5.QtWidgets import (
+from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
     QWidget,
@@ -20,8 +20,8 @@ from PyQt5.QtWidgets import (
     QSizePolicy,
     QSpinBox,
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot
-from PyQt5.QtGui import QImage, QPixmap
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QImage, QPixmap
 import concurrent.futures
 import multiprocessing
 
@@ -292,7 +292,7 @@ class VideoProcessor:
             stdout=subprocess.PIPE,
         )
         self.active_ffmpeg_processes.append(ffmpeg_process)  # Track the subprocess
-        
+
         import threading
 
         def read_ffmpeg_output(process):
@@ -540,7 +540,7 @@ class VideoProcessorThread(QThread):
 
 class VideoProcessorGUI(QMainWindow):
     """
-    PyQt5 based GUI for an easy UI.
+    PyQt6 based GUI for an easy UI.
     """
 
     def __init__(self):
@@ -589,7 +589,7 @@ class VideoProcessorGUI(QMainWindow):
         # Video display area -- no fixed size
         self.video_label = QLabel()
         self.video_label.setStyleSheet("background-color: black;")
-        self.video_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.video_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         # Current file label
         self.current_file_label = QLabel("Current File: None")
@@ -599,13 +599,13 @@ class VideoProcessorGUI(QMainWindow):
             "Current Video Progress: 0% (Frames: 0 / 0)"
         )
         self.current_video_progress_bar = QProgressBar()
-        self.current_video_progress_bar.setAlignment(Qt.AlignCenter)
+        self.current_video_progress_bar.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.current_video_progress_bar.setFormat("%p%")
 
         # Combined label for overall progress and files processed
         self.overall_progress_label = QLabel("Overall Progress: 0% (Files: 0 / 0)")
         self.overall_progress_bar = QProgressBar()
-        self.overall_progress_bar.setAlignment(Qt.AlignCenter)
+        self.overall_progress_bar.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.overall_progress_bar.setFormat("%p%")
 
         # Create speed and fps labels
@@ -616,10 +616,10 @@ class VideoProcessorGUI(QMainWindow):
         self.mode_label = QLabel("Processing Mode: CPU")
 
         # Adjust size policies for other widgets
-        self.start_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self.stop_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        input_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        output_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.start_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.stop_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        input_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        output_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
         # Layouts for buttons, checkboxes, etc.
         layout = QVBoxLayout()
@@ -680,16 +680,15 @@ class VideoProcessorGUI(QMainWindow):
         This has a @pyqtSlot decorator to signify that it can receive a signal.
         """
         # Allow selection of both files and directories
-        options = QFileDialog.Options()
-        options |= QFileDialog.DontUseNativeDialog
+        options = QFileDialog.Option.DontUseNativeDialog
         file_or_dir = QFileDialog.getExistingDirectory(
             self, "Select Input Directory", options=options
         )
         if not file_or_dir:
             # If no directory selected, allow file selection
             file_dialog = QFileDialog(self, "Select Input File", options=options)
-            file_dialog.setFileMode(QFileDialog.ExistingFiles)
-            if file_dialog.exec_():
+            file_dialog.setFileMode(QFileDialog.FileMode.ExistingFiles)
+            if file_dialog.exec():
                 selected_files = file_dialog.selectedFiles()
                 if selected_files:
                     # If multiple files are selected, choose the directory
@@ -928,12 +927,12 @@ class VideoProcessorGUI(QMainWindow):
         height, width, channel = frame.shape
         bytes_per_line = 3 * width
         q_image = QImage(
-            frame.data, width, height, bytes_per_line, QImage.Format_RGB888
+            frame.data, width, height, bytes_per_line, QImage.Format.Format_RGB888
         ).rgbSwapped()
         pixmap = QPixmap.fromImage(q_image)
         self.video_label.setPixmap(
             pixmap.scaled(
-                self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation
+                self.video_label.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
             )
         )
 
@@ -957,7 +956,7 @@ def main():
     app = QApplication(sys.argv)  # Initialize the Qt Application
     gui = VideoProcessorGUI()  # Create the GUI
     gui.show()  # Display the GUI
-    sys.exit(app.exec_())  # Execute the application loop
+    sys.exit(app.exec())  # Execute the application loop
 
 
 if __name__ == "__main__":
