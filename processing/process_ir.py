@@ -19,7 +19,6 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QSizePolicy,
     QSpinBox,
-    QGridLayout,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QImage, QPixmap
@@ -42,6 +41,7 @@ class VideoProcessor:
         progress_callback=None,
         frame_callback=None,
         threads=1,
+        use_cuda=False,  # New parameter to indicate CUDA usage
     ):
         """
         Initialize VideoProcessor Object that processes IR videos and applies CLAHE and adjust brightness and contrast.
@@ -53,6 +53,7 @@ class VideoProcessor:
             progress_callback (function, optional): Callback function for progress updates
             frame_callback (function, optional): Callback function for processed frames
             threads (int, optional): Number of threads to use for processing. Defaults to 1
+            use_cuda (bool, optional): Whether to use CUDA-based GPU processing. Defaults to False
 
         Attributes:
             input_path (Path): The resolved input file or directory path
@@ -60,25 +61,46 @@ class VideoProcessor:
             display (bool): Whether processed frames will be displayed
             progress_callback (function): Function for updating progress during processing
             frame_callback (function): Function for handling frame-by-frame updates
-            ffmpeg_processes (dict): A dictionary to store and manage ffmpeg subprocesses for encoding videos
+            active_ffmpeg_processes (list): A list to store and manage FFmpeg subprocesses
             threads (int): The number of threads (or CPU cores) to use for processing
+            use_cuda (bool): Whether to use CUDA for processing
+            stop_requested (bool): Flag to indicate if a stop has been requested
         """
         self.input_path = Path(input_path)
         self.output_dir = Path(output_dir)
         self.display = display
         self.progress_callback = progress_callback
         self.frame_callback = frame_callback
-        self.ffmpeg_processes = {}
+        self.active_ffmpeg_processes = []  # List to track active FFmpeg subprocesses
         self.threads = threads
+        self.use_cuda = use_cuda and self._check_cuda_available()
+        self.stop_requested = False  # Flag to indicate if a stop has been requested
+
+    def _check_cuda_available(self):
+        """
+        Check if OpenCV is built with CUDA support and if CUDA-enabled devices are available.
+
+        Returns:
+            bool: True if CUDA is available, False otherwise.
+        """
+        try:
+            cuda_count = cv2.cuda.getCudaEnabledDeviceCount()
+            if cuda_count > 0:
+                print(f"CUDA is available. {cuda_count} CUDA-enabled device(s) found.")
+                return True
+            else:
+                print("No CUDA-enabled devices found. Falling back to CPU processing.")
+                return False
+        except AttributeError:
+            print(
+                "OpenCV is not built with CUDA support. Falling back to CPU processing."
+            )
+            return False
 
     @staticmethod
     def adjust_brightness_contrast(frame, brightness=150, contrast=210):
         """
-        Adjust brightness and contrast of a frame. This method applies a linear transformation to the pixel values of the input frame
-        to adjust its brightness and contrast. The transformation is of the form:
-        output = alpha * input + beta
-
-        We assign this as a static method which means we don't need to instantiate the whole class before using this.
+        Adjust brightness and contrast of a frame using CPU.
 
         Args:
             frame (numpy.array): Input frame
@@ -96,27 +118,99 @@ class VideoProcessor:
     @staticmethod
     def adaptive_histogram_equalization(frame):
         """
-        Apply Contrast Limited Adaptive Histogram Equalization (CLAHE) to an input frame.
+        Apply Contrast Limited Adaptive Histogram Equalization (CLAHE) to an input frame using CPU.
 
-        This method enhances the contrast of the input frame using CLAHE. The process involves:
-        1. Converting the input frame to grayscale.
-        2. Applying CLAHE to the grayscale image.
-        3. Converting the result back to a 3-channel BGR image.
-
-        We assign this as a static method which means we don't need to instantiate the whole class before using this.
-        
         Args:
             frame (numpy.array): Input frame, a 3-channel BGR image as a numpy array.
 
         Returns:
             equalized_bgr (numpy.array): Equalized frame with enhanced contrast, in BGR format.
-
         """
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         equalized = clahe.apply(gray)
         equalized_bgr = cv2.cvtColor(equalized, cv2.COLOR_GRAY2BGR)
         return equalized_bgr
+
+    @staticmethod
+    def adjust_brightness_contrast_gpu(frame, brightness=150, contrast=210):
+        """
+        Adjust brightness and contrast of a frame using CUDA.
+
+        Args:
+            frame (numpy.array): Input frame
+            brightness (int, optional): Brightness adjustment value
+            contrast (int, optional): Contrast adjustment value
+
+        Returns:
+            adjusted (numpy.array): Adjusted frame
+        """
+        # Upload frame to GPU
+        gpu_frame = cv2.cuda_GpuMat()
+        gpu_frame.upload(frame)
+
+        # Adjust brightness and contrast
+        alpha = (contrast + 100) / 100.0
+        beta = brightness
+        gpu_adjusted = cv2.cuda.convertScaleAbs(gpu_frame, alpha=alpha, beta=beta)
+
+        # Download back to CPU
+        adjusted = gpu_adjusted.download()
+        return adjusted
+
+    @staticmethod
+    def adaptive_histogram_equalization_gpu(frame):
+        """
+        Apply Contrast Limited Adaptive Histogram Equalization (CLAHE) to an input frame using CUDA.
+
+        Args:
+            frame (numpy.array): Input frame, a 3-channel BGR image as a numpy array.
+
+        Returns:
+            equalized_bgr (numpy.array): Equalized frame with enhanced contrast, in BGR format.
+        """
+        # Upload frame to GPU
+        gpu_frame = cv2.cuda_GpuMat()
+        gpu_frame.upload(frame)
+
+        # Convert to grayscale
+        gpu_gray = cv2.cuda.cvtColor(gpu_frame, cv2.COLOR_BGR2GRAY)
+
+        # Apply CLAHE
+        clahe = cv2.cuda.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        gpu_equalized = clahe.apply(gpu_gray)
+
+        # Convert back to BGR
+        gpu_equalized_bgr = cv2.cuda.cvtColor(gpu_equalized, cv2.COLOR_GRAY2BGR)
+
+        # Download back to CPU
+        equalized_bgr = gpu_equalized_bgr.download()
+        return equalized_bgr
+
+    def stop_processing(self):
+        """
+        Terminate all active FFmpeg subprocesses and set the stop flag.
+        """
+        self.stop_requested = True
+        print("Stop requested. Terminating all active FFmpeg subprocesses...")
+
+        for process in self.active_ffmpeg_processes:
+            if process.poll() is None:  # If the process is still running
+                print(f"Terminating FFmpeg subprocess with PID: {process.pid}")
+                process.terminate()  # Send SIGTERM
+                try:
+                    process.wait(timeout=5)  # Wait for it to terminate
+                    print(
+                        f"FFmpeg subprocess with PID {process.pid} terminated gracefully."
+                    )
+                except subprocess.TimeoutExpired:
+                    print(
+                        f"FFmpeg subprocess with PID {process.pid} did not terminate in time. Killing it."
+                    )
+                    process.kill()  # Force kill if it didn't terminate
+
+        self.active_ffmpeg_processes.clear()  # Clear the list after termination
+        print("All active FFmpeg subprocesses have been terminated.")
 
     def process_file(self, file, file_index, total_files):
         """
@@ -146,47 +240,65 @@ class VideoProcessor:
         start_time = time.time()
         processed_frames = 0
 
-        # Start FFmpeg process
-        # What we are basically doing here is use multithreading (GIL-bound) to process video files, however, for each video file,
-        # we are allowing FFmpeg's built in video processing capabilities, which more less bypass the GIL since this involves a manual subprocess call.
-        # This makes this quite efficient and allows for faster video processing, which is useful when we have large (20 min) videos
-        # that also consume a large amount of memory
+        # Start FFmpeg process with CUDA-accelerated encoding if possible
+        if self.use_cuda:
+            vcodec = "h264_nvenc"  # NVIDIA's hardware-accelerated H.264 encoder
+            preset = "fast"  # Preset can be adjusted based on desired speed/quality
+        else:
+            vcodec = "libx264"  # Software-based H.264 encoder
+            preset = "ultrafast"
+
         command = [
             "ffmpeg",  # call the ffmpeg process
             "-y",  # overwrite file if it exists (good for testing)
             "-f",
             "rawvideo",  # tell ffmpeg we're sending raw video
-            "-vcodec",  # tell ffmpeg the codec
+            "-vcodec",
             "rawvideo",  # which is raw video
-            "-s",  # specify the video resolution (or size)
+            "-s",
             f"{width}x{height}",  # size of one frame
-            "-pix_fmt",  # pixel format
-            "bgr24",  # ... which is bgr24 (since this is opencv, which represents np array as bgr24)
-            "-r",  # frame rate
+            "-pix_fmt",
+            "bgr24",  # pixel format (matches OpenCV's format)
+            "-r",
             str(fps),  # the video fps
-            "-i",  # the input
+            "-i",
             "-",  # The input comes from a pipe
             "-an",  # Tells FFmpeg not to expect any audio
-            "-vcodec",  # the video codec to be encoded to
-            "libx264",  # which is libx264 (good for DeepLabCut/SLEAP and for most applications)
-            "-pix_fmt",  # set pixel format
-            "yuv420p",  # as yuv420p (usually the default)
-            "-preset",  # set encoding to compression ratio
-            "ultrafast",  # to ultrafast (we care more about speed than memory)
-            "-tune",  # sets how to optimize the encoding process
-            "film",  # we set this to film (we want a high quality video)
-            "-threads",  # number of threads to use
+            "-vcodec",
+            vcodec,  # Encoder based on CUDA availability
+            "-pix_fmt",
+            "yuv420p",  # pixel format
+            "-preset",
+            preset,  # encoding preset
+            "-tune",
+            "film",  # tuning parameter
+            "-threads",
             str(
                 self.threads
                 if self.threads > 0
                 else multiprocessing.cpu_count()  # set the number of CPU cores to be used here
-            ),  # number of CPU threads to use
-            str(
-                output_path
-            ),  # where to save the encoded video (convert to str from pathlib object)
+            ),
+            str(output_path),  # where to save the encoded video
         ]
 
-        ffmpeg_process = subprocess.Popen(command, stdin=subprocess.PIPE)
+        ffmpeg_process = subprocess.Popen(
+            command,
+            stdin=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+        )
+        self.active_ffmpeg_processes.append(ffmpeg_process)  # Track the subprocess
+
+        # Optional: Start a thread to read FFmpeg's stderr for debugging
+        import threading
+
+        def read_ffmpeg_output(process):
+            for line in iter(process.stderr.readline, b""):
+                print(f"FFmpeg: {line.decode().strip()}")
+
+        threading.Thread(
+            target=read_ffmpeg_output, args=(ffmpeg_process,), daemon=True
+        ).start()
 
         # Notify about the current file
         if self.progress_callback:
@@ -199,25 +311,49 @@ class VideoProcessor:
                 },
             )
 
-        while True:  # our processing loop (while the video is still there)
+        while True:
+            if self.stop_requested:
+                # Stop has been requested; break the loop
+                break
+
             ret, frame = cap.read()
             if not ret:
                 break
 
-            adjusted_frame = self.adjust_brightness_contrast(frame)
-            equalized_frame = self.adaptive_histogram_equalization(adjusted_frame)
+            # Process frame using CUDA or CPU
+            if self.use_cuda:
+                try:
+                    adjusted_frame = self.adjust_brightness_contrast_gpu(frame)
+                    equalized_frame = self.adaptive_histogram_equalization_gpu(
+                        adjusted_frame
+                    )
+                except cv2.error as e:
+                    # If CUDA processing fails, fallback to CPU
+                    print(f"CUDA processing failed: {e}. Falling back to CPU.")
+                    self.use_cuda = False
+                    adjusted_frame = self.adjust_brightness_contrast(frame)
+                    equalized_frame = self.adaptive_histogram_equalization(
+                        adjusted_frame
+                    )
+            else:
+                adjusted_frame = self.adjust_brightness_contrast(frame)
+                equalized_frame = self.adaptive_histogram_equalization(adjusted_frame)
+
             frame_bytes = equalized_frame.tobytes()
 
-            ffmpeg_process.stdin.write(frame_bytes)
+            try:
+                ffmpeg_process.stdin.write(frame_bytes)
+            except BrokenPipeError:
+                raise IOError("FFmpeg subprocess pipe is broken.")
 
             processed_frames += 1
 
-            # compute video progress
+            # Compute video progress
             current_video_progress = (
                 int((processed_frames / total_frames) * 100) if total_frames > 0 else 0
             )
 
-            # compute processing speed
+            # Compute processing speed
             elapsed_time = time.time() - start_time
             if elapsed_time > 0:
                 current_fps = processed_frames / elapsed_time
@@ -226,7 +362,7 @@ class VideoProcessor:
                 current_fps = 0
                 processing_speed = 0
 
-            # update progress
+            # Update progress
             if self.progress_callback:
                 self.progress_callback(
                     "progress",
@@ -248,6 +384,7 @@ class VideoProcessor:
         cap.release()
         ffmpeg_process.stdin.close()
         ffmpeg_process.wait()
+        self.active_ffmpeg_processes.remove(ffmpeg_process)  # Remove from tracking list
 
     def process_folder(self, stop_check=None):
         """
@@ -278,8 +415,7 @@ class VideoProcessor:
         if total_files == 0:
             raise FileNotFoundError("No video files found in the input directory.")
 
-        # initialize the ThreadPoolExecutor
-        # we use this for multithreading file handling
+        # Initialize the ThreadPoolExecutor
         max_workers = self.threads if self.threads > 0 else multiprocessing.cpu_count()
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all tasks
@@ -302,8 +438,8 @@ class VideoProcessor:
                     if self.progress_callback:
                         self.progress_callback("error", str(e))
 
-        # Update overall progress to 100%
-        if self.progress_callback:
+        # Update overall progress to 100% only if not stopped
+        if self.progress_callback and not self.stop_requested:
             self.progress_callback(
                 "overall_progress",
                 {
@@ -349,21 +485,21 @@ class VideoProcessorThread(QThread):
         """
         try:
             self.processor.process_folder(stop_check=self.is_stopped)
-            if self.is_running:
+            if self.is_running and not self.processor.stop_requested:
                 self.finished.emit()
-            else:
+            elif self.processor.stop_requested:
                 self.error.emit("Processing stopped by user.")
         except Exception as e:
             self.error.emit(str(e))
         finally:
-            self.processor.stop_processing()  # Safe stop ffmpeg processes
+            self.processor.active_ffmpeg_processes.clear()  # Clear any FFmpeg subprocess references
 
     def stop(self):
         """
         Safely stop the processing operation
         """
         self.is_running = False
-        self.processor.stop_processing()  # stop ffmpeg processes
+        self.processor.stop_processing()  # Terminate FFmpeg subprocesses and set stop flag
 
     def is_stopped(self):
         """
@@ -374,51 +510,6 @@ class VideoProcessorThread(QThread):
     def progress_callback(self, event_type, data):
         """
         Handles progress updates for the video processing operation by emitting corresponding signals to the GUI.
-
-        This method processes various types of events related to the progress of video processing tasks, such as file changes,
-        progress updates, overall progress, and errors. Depending on the event type, it triggers different signals to update
-        the GUI with the latest information.
-
-        Args:
-        event_type (str): A string indicating the type of event. Expected values are:
-            - "file_changed": Indicates that the currently processed file has changed.
-            - "progress": Updates progress for the currently processed video file.
-            - "overall_progress": Updates overall progress across all video files being processed.
-            - "error": Indicates that an error has occurred.
-
-        data (dict): A dictionary containing relevant data for the specified event type. The expected structure of `data`
-                     varies based on the event type:
-            - For "file_changed":
-                {
-                    "current_file": str,    # The name of the current file being processed
-                    "file_index": int,      # The index of the current file in the list of files
-                    "total_files": int      # The total number of files to process
-                }
-            - For "progress":
-                {
-                    "current_video_progress": int,   # The progress of the current video in percentage
-                    "current_fps": float,            # The current frames per second (FPS) processing rate
-                    "processing_speed": float,       # The processing speed as a multiplier (e.g., 2x)
-                    "processed_frames": int,         # The number of frames processed so far
-                    "total_frames": int              # The total number of frames in the video
-                }
-            - For "overall_progress":
-                {
-                    "overall_progress": int,         # The overall processing progress in percentage
-                    "files_processed": int,          # The number of files processed so far
-                    "total_files": int               # The total number of files to process
-                }
-            - For "error": A string containing the error message.
-
-        Emits:
-            - file_changed: Signal to update the current file being processed.
-            - current_video_progress: Signal to update the progress of the current video.
-            - overall_progress: Signal to update the overall progress of all files.
-            - current_fps: Signal to update the current FPS being processed.
-            - processing_speed: Signal to update the processing speed multiplier.
-            - frames_processed: Signal to update the number of frames processed in the current video.
-            - files_processed: Signal to update the number of files processed so far.
-            - error: Signal to handle and display any error that occurred during processing.
         """
         if event_type == "file_changed":
             self.file_changed.emit(data["current_file"])
@@ -439,7 +530,7 @@ class VideoProcessorThread(QThread):
         Function to emit a signal to the PyQt GUI.
 
         Args:
-        frame (numpy.array): NumPy Array representing the frame, to be converted into a PyQt object and displayed.
+            frame (numpy.array): NumPy Array representing the frame, to be converted into a PyQt object and displayed.
         """
         self.frame.emit(frame)
 
@@ -452,7 +543,7 @@ class VideoProcessorGUI(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Video Processor")
-        self.resize(600, 800)
+        self.resize(800, 900)  # Increased height to accommodate new widgets
         self.processor = None
         self.thread = None
         self.initUI()
@@ -474,6 +565,10 @@ class VideoProcessorGUI(QMainWindow):
         self.display_checkbox = QCheckBox("Display Video")
         self.display_checkbox.setChecked(True)
 
+        # CUDA option checkbox
+        self.cuda_checkbox = QCheckBox("Enable CUDA-based GPU Processing")
+        self.cuda_checkbox.setChecked(False)  # Default to CPU processing
+
         # CPU Core selection
         cpu_label = QLabel("Number of CPU Cores (0 for all):")
         self.cpu_spinbox = QSpinBox()
@@ -488,15 +583,15 @@ class VideoProcessorGUI(QMainWindow):
         self.stop_button.clicked.connect(self.stop_processing)
         self.stop_button.setEnabled(False)
 
-        # video display area -- no fixed size
+        # Video display area -- no fixed size
         self.video_label = QLabel()
         self.video_label.setStyleSheet("background-color: black;")
         self.video_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        # current file label
+        # Current file label
         self.current_file_label = QLabel("Current File: None")
 
-        # create progress labels
+        # Create progress labels
         self.current_video_progress_label = QLabel(
             "Current Video Progress: 0% (Frames: 0 / 0)"
         )
@@ -510,17 +605,20 @@ class VideoProcessorGUI(QMainWindow):
         self.overall_progress_bar.setAlignment(Qt.AlignCenter)
         self.overall_progress_bar.setFormat("%p%")
 
-        # create speed and fps labels
+        # Create speed and fps labels
         self.fps_label = QLabel("Current FPS: 0.00")
         self.speed_label = QLabel("Processing Speed: 0.00x")
 
-        # adjust size policies for other widgets
+        # Processing mode label
+        self.mode_label = QLabel("Processing Mode: CPU")
+
+        # Adjust size policies for other widgets
         self.start_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.stop_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         input_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         output_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
-        # layouts for button, boxes, etc.
+        # Layouts for buttons, checkboxes, etc.
         layout = QVBoxLayout()
 
         input_layout = QHBoxLayout()
@@ -541,21 +639,23 @@ class VideoProcessorGUI(QMainWindow):
         button_layout.addWidget(self.start_button)
         button_layout.addWidget(self.stop_button)
 
-        # current video progress layout
+        # Current video progress layout
         current_video_progress_layout = QVBoxLayout()
         current_video_progress_layout.addWidget(self.current_video_progress_label)
         current_video_progress_layout.addWidget(self.current_video_progress_bar)
 
-        # overall progress layout
+        # Overall progress layout
         overall_progress_layout = QVBoxLayout()
         overall_progress_layout.addWidget(self.overall_progress_label)
         overall_progress_layout.addWidget(self.overall_progress_bar)
 
-        # add widgets to the main layout
+        # Add widgets to the main layout
         layout.addLayout(input_layout)
         layout.addLayout(output_layout)
         layout.addLayout(cpu_layout)
         layout.addWidget(self.display_checkbox)
+        layout.addWidget(self.cuda_checkbox)  # Added CUDA checkbox
+        layout.addWidget(self.mode_label)  # Added processing mode label
         layout.addLayout(button_layout)
         layout.addWidget(self.current_file_label)
         layout.addWidget(self.video_label)
@@ -618,6 +718,7 @@ class VideoProcessorGUI(QMainWindow):
         input_path = self.input_line.text()
         output_dir = self.output_line.text()
         display = self.display_checkbox.isChecked()
+        use_cuda = self.cuda_checkbox.isChecked()
         threads = self.cpu_spinbox.value()
 
         if not input_path or not output_dir:
@@ -639,9 +740,18 @@ class VideoProcessorGUI(QMainWindow):
         )
         self.overall_progress_label.setText("Overall Progress: 0% (Files: 0 / 0)")
 
+        # Initialize VideoProcessor with CUDA option
         self.processor = VideoProcessor(
-            input_path, output_dir, display=display, threads=threads
+            input_path, output_dir, display=display, threads=threads, use_cuda=use_cuda
         )
+
+        # Update processing mode label
+        if self.processor.use_cuda:
+            self.mode_label.setText("Processing Mode: CUDA-enabled GPU")
+            print("CUDA-based GPU processing is enabled.")
+        else:
+            self.mode_label.setText("Processing Mode: CPU")
+            print("CPU processing is enabled.")
 
         # Set start and stop button defaults
         self.start_button.setEnabled(False)
@@ -665,10 +775,9 @@ class VideoProcessorGUI(QMainWindow):
     def stop_processing(self):
         """
         Destructor for safe video process stopping.
-
-        This has a @pyqtSlot decorator to signify that it can receive a signal.
         """
         if self.thread and self.thread.isRunning():
+            self.stop_button.setEnabled(False)  # Disable to prevent multiple clicks
             self.thread.stop()
             self.thread.wait()  # Wait for the thread to finish
             self.processing_finished()
@@ -705,7 +814,7 @@ class VideoProcessorGUI(QMainWindow):
         Helper function to update the number of files in the GUI that have been processed.
 
         Args:
-        value (float): The percentage of files that have been processed.
+            value (float): The percentage of files that have been processed.
 
         This has a @pyqtSlot decorator to signify that it can receive a signal.
         """
@@ -725,7 +834,7 @@ class VideoProcessorGUI(QMainWindow):
         Helper function to update the fps.
 
         Args:
-        fps (float): Current fps of the video processing operation.
+            fps (float): Current fps of the video processing operation.
 
         This has a @pyqtSlot decorator to signify that it can receive a signal.
         """
@@ -737,9 +846,9 @@ class VideoProcessorGUI(QMainWindow):
         Helper function to update the video speed.
 
         Args:
-        speed (float): Current speed of the video processing operation.
+            speed (float): Current speed of the video processing operation.
 
-        This has a @pyqtSlot decorator to signify that it can receive a signal (in this case, from an FFmpeg process).
+        This has a @pyqtSlot decorator to signify that it can receive a signal.
         """
         self.speed_label.setText(f"Processing Speed: {speed:.2f}x")
 
@@ -749,10 +858,10 @@ class VideoProcessorGUI(QMainWindow):
         Helper function to update the number of frames that have been processed in the GUI.
 
         Args:
-        processed_frames (int): Total number of frames that have been processed.
-        total_frames (int): Total number of frames in the video.
+            processed_frames (int): Total number of frames that have been processed.
+            total_frames (int): Total number of frames in the video.
 
-        This has a @pyqtSlot decorator to signify that it can receive a signal (in this case, from an FFmpeg process).
+        This has a @pyqtSlot decorator to signify that it can receive a signal.
         """
         percentage = (processed_frames / total_frames) * 100 if total_frames > 0 else 0
         self.current_video_progress_label.setText(
@@ -765,10 +874,10 @@ class VideoProcessorGUI(QMainWindow):
         Helper function to update the percentage of files that have been processed.
 
         Args:
-        files_processed (int): Number of files that have been processed.
-        total_files (int): Total number of files.
+            files_processed (int): Number of files that have been processed.
+            total_files (int): Total number of files.
 
-        This has a @pyqtSlot decorator to signify that it can receive a signal (in this case, from an FFmpeg process).
+        This has a @pyqtSlot decorator to signify that it can receive a signal.
         """
         percentage = (files_processed / total_files) * 100 if total_files > 0 else 0
         self.overall_progress_label.setText(
@@ -779,8 +888,6 @@ class VideoProcessorGUI(QMainWindow):
     def processing_finished(self):
         """
         Function to signify whether video processing has been completed.
-
-        This has a @pyqtSlot decorator to signify that it can receive a signal (in this case, from an FFmpeg process).
         """
         QMessageBox.information(
             self, "Processing Finished", "Video processing is complete."
@@ -788,6 +895,7 @@ class VideoProcessorGUI(QMainWindow):
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
         self.video_label.clear()
+        self.mode_label.setText("Processing Mode: CPU")  # Reset to default mode
 
     @pyqtSlot(str)
     def handle_error(self, error_message):
@@ -795,14 +903,15 @@ class VideoProcessorGUI(QMainWindow):
         Function for basic error handling.
 
         Args:
-        error_message (str): The error message to be displayed (this has been converted into a string by the time this function is called).
+            error_message (str): The error message to be displayed.
 
-        This has a @pyqtSlot decorator to signify that it can receive a signal (in this case, from an FFmpeg process).
+        This has a @pyqtSlot decorator to signify that it can receive a signal.
         """
         QMessageBox.critical(self, "Error", error_message)
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
         self.video_label.clear()
+        self.mode_label.setText("Processing Mode: CPU")  # Reset to default mode
 
     @pyqtSlot(np.ndarray)
     def update_frame(self, frame):
@@ -810,7 +919,7 @@ class VideoProcessorGUI(QMainWindow):
         Function for updating the frame in the display GUI. We use PyQt here instead of OpenCV for better memory handling. This function converts a numpy array into a QImage and then creates a PixMap to be displayed within the GUI.
 
         Args:
-        frame (numpy.array): A 3D numpy array with shape (height, width, channels) representing the video frame.
+            frame (numpy.array): A 3D numpy array with shape (height, width, channels) representing the video frame.
         """
         # Convert the frame to QImage and display it
         height, width, channel = frame.shape
@@ -830,22 +939,22 @@ class VideoProcessorGUI(QMainWindow):
         Function for handling PyQt window closing.
 
         Args:
-        event (QCloseEvent): an event generated when the user attempts to close a window (either by shortcut or explicitly)
+            event (QCloseEvent): An event generated when the user attempts to close a window.
         """
         # Ensure the thread and ffmpeg process are properly terminated when the GUI is closed
         if self.thread and self.thread.isRunning():
             self.thread.stop()
             self.thread.wait()
         if self.processor:
-            self.processor.stop_processing()
+            self.processor.stop_processing()  # Ensure all subprocesses are terminated
         event.accept()
 
 
 def main():
-    app = QApplication(sys.argv)  # initialize the Qt Applicatiion
-    gui = VideoProcessorGUI()  # show the GUI
-    gui.show()  # we don't need an explicit .show() method to our GUI since this is a Qt Application
-    sys.exit(app.exec_())  # destroy the app
+    app = QApplication(sys.argv)  # Initialize the Qt Application
+    gui = VideoProcessorGUI()  # Create the GUI
+    gui.show()  # Display the GUI
+    sys.exit(app.exec_())  # Execute the application loop
 
 
 if __name__ == "__main__":
