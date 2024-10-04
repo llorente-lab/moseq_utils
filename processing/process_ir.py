@@ -117,8 +117,7 @@ class VideoProcessor:
             adjusted (numpy.array): Adjusted frame
         """
         alpha = (contrast + 100) / 100.0
-        beta = brightness
-        adjusted = cv2.convertScaleAbs(frame, alpha=alpha, beta=beta)
+        adjusted = cv2.convertScaleAbs(frame, alpha=alpha, beta=brightness)
         return adjusted
 
     @staticmethod
@@ -157,8 +156,7 @@ class VideoProcessor:
 
         # Adjust brightness and contrast
         alpha = (contrast + 100) / 100.0
-        beta = brightness
-        gpu_adjusted = cv2.cuda.convertScaleAbs(gpu_frame, alpha=alpha, beta=beta)
+        gpu_adjusted = cv2.cuda.convertScaleAbs(gpu_frame, alpha=alpha, beta=brightness)
 
         # Download back to CPU
         adjusted = gpu_adjusted.download()
