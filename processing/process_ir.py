@@ -294,8 +294,7 @@ class VideoProcessor:
             stdout=subprocess.PIPE,
         )
         self.active_ffmpeg_processes.append(ffmpeg_process)  # Track the subprocess
-
-        # Optional: Start a thread to read FFmpeg's stderr for debugging
+        
         import threading
 
         def read_ffmpeg_output(process):
