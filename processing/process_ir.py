@@ -29,6 +29,12 @@ import multiprocessing
 """
 Function for processing IR videos obtained from MoSeq analysis for visualization
 This allows for seamless use with DeepLabCut, SLEAP, or any keypoint tracking programs
+
+Note that to enable GPU processing, you will need to build OpenCV with GPU support. For a simple overview:
+1. You will need to first have CUDA installed. Follow NVIDIA instructions to do this.
+2. You will also need cudNN (NVIDIA's Deep Neural Network) module to enable support for OpenCV.
+3. You will need to build OpenCV from source with GPU support. Sadly, we have to do this since unlike PyTorch or Tensorflow, we can't just use pip or conda. These instructions might be useful for doing so:
+https://medium.com/@amosstaileyyoung/build-opencv-with-dnn-and-cuda-for-gpu-accelerated-face-detection-27a3cdc7e9ce
 """
 
 
