@@ -233,9 +233,12 @@ class VideoProcessor:
             raise IOError(f"Exception occurred while opening video file {file}: {e}")
 
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        fps = cap.get(cv2.CAP_PROP_FPS) or 30  # Default to 30 if FPS is zero
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        frate = cap.get(cv2.CAP_PROP_FPS)
+        if frate != 0:
+            fps = frate
+        else:
+            fps = 30
 
         output_name = file.stem + "_processed.mp4"
         output_path = self.output_dir / output_name
