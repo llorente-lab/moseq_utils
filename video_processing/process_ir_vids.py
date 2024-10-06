@@ -595,7 +595,9 @@ class VideoProcessorGUI(QMainWindow):
         # Video display area -- no fixed size
         self.video_label = QLabel()
         self.video_label.setStyleSheet("background-color: black;")
-        self.video_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.video_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
 
         # Current file label
         self.current_file_label = QLabel("Current File: None")
@@ -622,8 +624,12 @@ class VideoProcessorGUI(QMainWindow):
         self.mode_label = QLabel("Processing Mode: CPU")
 
         # Adjust size policies for other widgets
-        self.start_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        self.stop_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.start_button.setSizePolicy(
+            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
+        )
+        self.stop_button.setSizePolicy(
+            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
+        )
         input_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         output_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
@@ -938,7 +944,9 @@ class VideoProcessorGUI(QMainWindow):
         pixmap = QPixmap.fromImage(q_image)
         self.video_label.setPixmap(
             pixmap.scaled(
-                self.video_label.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+                self.video_label.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
             )
         )
 

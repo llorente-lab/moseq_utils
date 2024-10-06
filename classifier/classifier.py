@@ -23,12 +23,14 @@ from tqdm import tqdm
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 from sklearn.multiclass import OneVsRestClassifier
+from plotting.config import _get_mapping
 
 
 class Classifier:
     """
     Linear Classifier for predicting experimental group based on behavioral summaries.
     """
+
     def __init__(
         self,
         model_type="logistic_regression",
@@ -42,14 +44,14 @@ class Classifier:
 
         Args:
         - model_type (str): Type of model to use (logistic_regression, random_forest, or svm). Defaults to Logistic Regression.
-        - color_mapping (dict): Dictionary mapping experimental group to specific colors. If None, it will use viridis.
+        - color_mapping (str): String which specifies which color mapping (male or female) to use. If None, defaults to viridis.
         - random_state (int): Random state used to initialize the classifier.
         - plot_dir (str): Path to save plots in.
         - features (str): Prediction features being used. Defaults to MoSeq.
 
         Attributes:
         - model_type (str): Type of model to use (logistic_regression, random_forest, or svm). Defaults to Logistic Regression.
-        - color_mapping (dict): Dictionary mapping experimental group to specific colors. If None, it will use viridis.
+        - color_mapping (dict): Dictionary with keys corresponding to experimental group and values corresponding to colors.
         - random_state (int): Random state used to initialize the classifier.
         - plot_dir (str): Path to save plots in.
         - model (OneVsRestClassifier, RandomForestClassifier, or SVC): The model that is instantiated based on the specified `model_type`.
@@ -73,7 +75,10 @@ class Classifier:
             n_splits=10, shuffle=True, random_state=self.random_state
         )
 
-        self.color_mapping = color_mapping if color_mapping is not None else {}
+        if color_mapping is not None:
+            _, self.color_mapping = _get_mapping(color_mapping)
+        else:
+            self.color_mapping = {}
 
     def _get_model(self):
         """
@@ -153,8 +158,7 @@ class Classifier:
         - Employs stratified k-fold cross-validation for more robust performance estimation.
         - The confusion matrix plot is generated using seaborn and customized for readability.
         - The method handles multi-class classification scenarios.
-        """"
-                                                                    
+        """
         X_resampled, y_resampled = self._preprocess_data(X, y)
 
         y_pred = cross_val_predict(

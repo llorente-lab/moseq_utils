@@ -13,21 +13,7 @@ import os
 from scikit_posthocs import posthoc_dunn
 import matplotlib as mpl
 from scipy.spatial.distance import jensenshannon
-from config import (
-    MAPPING_MALES,
-    COLOR_MAPPING_MALES,
-    MAPPING_FEMALES,
-    COLOR_MAPPING_FEMALES,
-)
-
-
-def _get_mapping(mapping):
-    if mapping.lower() == "male":
-        return MAPPING_MALES, COLOR_MAPPING_MALES
-    elif mapping.lower() == "female":
-        return MAPPING_FEMALES, COLOR_MAPPING_FEMALES
-    else:
-        raise ValueError(f"Mapping must be male or female, not {mapping}")
+from config import _get_mapping
 
 
 def run_kw_dunn(data, group_col, value_col, control_group):
