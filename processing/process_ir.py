@@ -240,6 +240,9 @@ class VideoProcessor:
         else:
             fps = 30
 
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
         output_name = file.stem + "_processed.mp4"
         output_path = self.output_dir / output_name
 
