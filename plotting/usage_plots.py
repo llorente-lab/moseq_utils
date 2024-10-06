@@ -43,7 +43,7 @@ def run_kw_dunn(data, group_col, value_col, control_group):
         h_statistic, p_value = stats.kruskal(*group_data)
 
         if p_value < 0.01:  # If significant difference exists
-            # Dunn's post-hoc test
+            # then we run Dunn's post-hoc test
             posthoc = posthoc_dunn(
                 syll_data, val_col=value_col, group_col=group_col, p_adjust="bonferroni"
             )
