@@ -13,7 +13,7 @@ import os
 from scikit_posthocs import posthoc_dunn
 import matplotlib as mpl
 from scipy.spatial.distance import jensenshannon
-from config import _get_mapping
+from config import get_mapping
 
 
 def run_kw_dunn(data, group_col, value_col, control_group):
@@ -85,7 +85,7 @@ def plot_syllable_usage_comparison(
     """
 
     try:
-        MAPPING, COLOR_MAPPING = _get_mapping(mapping)
+        MAPPING, COLOR_MAPPING = get_mapping(mapping)
     except ValueError as e:
         print(f"Error: {e}")
         return None, None, None  # lets keep the return type consistent

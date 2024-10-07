@@ -23,7 +23,7 @@ from tqdm import tqdm
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 from sklearn.multiclass import OneVsRestClassifier
-from plotting.config import _get_mapping
+from plotting.config import get_mapping
 
 
 class Classifier:
@@ -76,7 +76,7 @@ class Classifier:
         )
 
         if color_mapping is not None:
-            _, self.color_mapping = _get_mapping(color_mapping)
+            _, self.color_mapping = get_mapping(color_mapping)
         else:
             self.color_mapping = {}
 

@@ -51,7 +51,7 @@ COLOR_MAPPING_MALES = {
 }
 
 
-def _get_mapping(mapping):
+def get_mapping(mapping):
     """
     Returns mappings as a tuple of (mapping, color_mapping)
     """

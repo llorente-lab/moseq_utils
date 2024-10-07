@@ -21,6 +21,7 @@ from sklearn.metrics import (
 from sklearn.utils import class_weight
 from imblearn.over_sampling import SMOTE
 import tensorflow_decision_forests as tfdf
+from plotting.config import get_mapping
 
 
 class Classifier:
@@ -92,7 +93,7 @@ class Classifier:
         self.skf = StratifiedKFold(
             n_splits=10, shuffle=True, random_state=self.random_state
         )
-
+        
         self.color_mapping = color_mapping if color_mapping else {}
 
         self.scaler = StandardScaler()
