@@ -234,7 +234,7 @@ class VideoProcessor:
 
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-        frate = cap.get(cv2.CAP_PROP_FPS)
+        frate = int(cap.get(cv2.CAP_PROP_FPS))
         if frate != 0:
             fps = frate
         else:
