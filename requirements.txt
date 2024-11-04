@@ -1,6 +1,5 @@
 opencv-python
 numpy<2.0
-pathlib
 PyQt6
 scikit-learn
 scipy
@@ -10,3 +9,4 @@ matplotlib
 scikit-posthocs
 pandas
 seaborn
+tensorflow-decision-forests
