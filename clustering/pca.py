@@ -2,7 +2,7 @@ import h5py
 import dask.array as da
 from dask_cuda import LocalCUDACluster
 from dask.distributed import Client
-from cuml.dask.decomposition import PCA as daskPCA
+from cuml.dask.decomposition import PCA
 import numpy as np
 import sys
 import time
@@ -84,8 +84,13 @@ def run_pca_pipeline(
                 if dask_array_2d.ndim != 2:
                     raise ValueError(f"Reshaped array has {dask_array_2d.ndim} dimensions; expected 2D array.")
 
-                # Initialize PCA
-                pca = daskPCA(n_components=n_components)
+                print(f"Data type before conversion: {dask_array_2d.dtype}")
+                print("Converting data type from uint16 to float32...")
+                dask_array_2d = dask_array_2d.astype(np.float32)
+                print(f"Data type after conversion: {dask_array_2d.dtype}")
+
+                #initialize pca
+                pca = PCA(n_components=n_components)
 
                 print("Fitting PCA on the entire dataset...")
                 pca.fit(dask_array_2d)
