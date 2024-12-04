@@ -9,7 +9,7 @@ import time
 from contextlib import contextmanager
 
 @contextmanager
-def dask_cluster(n_workers=1, device_memory_limit='70%'):
+def dask_cluster(n_workers=1, device_memory_limit=0.7):
     """Context manager for handling Dask cluster lifecycle with Colab support"""
     cluster = None
     client = None
